@@ -1,11 +1,8 @@
-import os, sys, csv, shutil
-from posixpath import abspath
-from collections import OrderedDict
+import os, sys, csv, shutil, re
 from distutils.dir_util import copy_tree
 
 UUID_count=32
-def process_notion(notion_folder: str):
-  raise NotImplemented
+MAX_filename_length=86 # Pages from Notion pages are often converted to shorter filenames
 
 def get_uuid_from_filename(file_name: str):
   raw_file_name = os.path.basename(file_name.split('.')[0]) #Folder (no .) works too
@@ -27,36 +24,40 @@ def get_all_uuid(root_folder: str):
 
   return uuids
 
-def csv_to_list_dict(file_name: str):
+def csv_to_markdown_table(file_name: str):
   """In Notion, any Database page are saved as a Folder and CSV file with same name. 
   The Folder contains each page in database, and CSV contains the properties associated with it. 
   This function reads the csv, and return each row as dict, with keys as the first row (what each properties are called)."""
   assert '.csv' in file_name
   with open(file_name, newline='') as csvfile:
     csv_content = csv.reader(csvfile, delimiter=',', quotechar='"')
-  first_row = next(csv_content)
-  csv_list = []
-  for row in csv_content:
-    csv_dict = {key: '' for key in first_row}
-    for key, value in zip(first_row, row):
-      csv_dict[key] = value
-    csv_list.append(csv_dict)
-  return csv_list
+    first_row = next(csv_content)
+    csv_list = []
+    markdown_str = '|' + '|'.join(first_row) + '|\n'
+    markdown_str = markdown_str + '|' + '|'.join(['---' for _ in range(len(first_row))]) + '|\n'
+    for row in csv_content:
+      row[0] = '[[' + row[0] + ']]' # assumes first element of .csv is Name, which is the filename
+      markdown_str = markdown_str + '|' + '|'.join(row) + '|\n'
+  return markdown_str
 
-def add_property_to_file(filename: str, property_dict: dict):
-  """Prepend the content of dict (properties) on top of a File."""
-  file_uuid = get_uuid_from_filename(filename)
-  with open(filename, 'r') as f:
-    content = f.read()
-  str_property = '\n'.join([f"{key}: {value}" for key, value in property_dict.keys()])
-  with open(filename, 'w') as f:
-    f.write(str_property + '\n' + content)
+def csv_to_markdown_table_file(file_name: str, uuids: set):
+  markdown_str = csv_to_markdown_table(file_name)
+  file_uuid = get_uuid_from_filename(file_name)
+  markdown_file = file_name.replace('.csv', '.md').replace(" " + file_uuid, '')
+  for uuid in uuids:
+    markdown_str =markdown_str.replace(r"%20"+uuid, '')
+  with open(markdown_file, 'w') as f:
+    f.write(markdown_str)
 
-def remove_uuids_from_file(filename, uuids):
+
+def remove_uuids_from_file(filename: str, uuids: set, replace_internal_links=False):
+  regex_find = r"\[.*\]\((?!://)(.*)\)"
+  regex_replace = r"[[\1]]"
   with open(filename, 'r') as f:
     content = f.read()
     for uuid in uuids:
-      content = content.replace(uuid, '')
+      content = content.replace(r"%20"+uuid, '')
+    if replace_internal_links: content = re.sub(regex_find, regex_replace, content)
   with open(filename, 'w') as f:
     f.write(content)
 
@@ -75,11 +76,12 @@ def process_folder(folder: str, uuids: set):
     for file in md_files:
       file_uuid = get_uuid_from_filename(file)
       remove_uuids_from_file(full_path(file), uuids)
-      os.rename(full_path(file), full_path(file.replace(file_uuid, '')))
+      os.rename(full_path(file), full_path(file.replace(" "+file_uuid, '')))
     for csv_file in csv_filename:
+      csv_to_markdown_table_file(full_path(csv_file), uuids)
       os.remove(full_path(csv_file))
     folder_uuid = get_uuid_from_filename(path)
-    shutil.move(path, path.replace(folder_uuid, ''))
+    shutil.move(path, path.replace(" "+folder_uuid, ''))
   except StopIteration:
     pass
 
